@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Portfolio Insights</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/recharts@2.10.3/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Poppins',sans-serif;background:#0a0e1a;color:#e2e8f0;min-height:100vh}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:#0a0e1a}::-webkit-scrollbar-thumb{background:#1e2d4a;border-radius:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useCallback,useRef,useMemo,useEffect}=React;
+const {PieChart,Pie,Cell,Tooltip,ResponsiveContainer,AreaChart,Area,XAxis,YAxis,CartesianGrid,Sector}=Recharts;
+
+const API = "/api/ai";
+const DEFAULT_HOLDINGS = [
+  { id: 1, ticker: "GOOGL", shares: "18.46", avgCost: "126.15" },
+  { id: 2, ticker: "NVDA", shares: "30.44", avgCost: "46.20" },
+  { id: 3, ticker: "TSLA", shares: "12", avgCost: "200.00" },
+  { id: 4, ticker: "SPY", shares: "20", avgCost: "380.00" },
+  { id: 5, ticker: "NVDA-2", shares: "5", avgCost: "400.00" },
+  { id: 6, ticker: "JNJ", shares: "10", avgCost: "155.00" },
+  { id: 7, ticker: "BRK.B", shares: "6", avgCost: "310.00" },
+  { id: 8, ticker: "VTI", shares: "18", avgCost: "200.00" },
+  { id: 9, ticker: "AMZN", shares: "7", avgCost: "130.00" },
+  { id: 10, ticker: "GLD", shares: "14", avgCost: "170.00" },
+  { id: 11, ticker: "BTC", shares: "0.5", avgCost: "35000.00" },
+  { id: 12, ticker: "ETH", shares: "2", avgCost: "2000.00" },
+  { id: 13, ticker: "SOL", shares: "10", avgCost: "80.00" },
+  { id: 14, ticker: "QQQ", shares: "5", avgCost: "350.00" },
+  { id: 15, ticker: "VYM", shares: "8", avgCost: "105.00" },
+];
+
+function cleanTicker(t) { return (t || "").replace(/-\d+$/, "").toUpperCase().trim(); }
+function fmt(v) { return "$" + v.toLocaleString("en-US"); }
+function useWidth() {
+  var [w, setW] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
+  useEffect(function() { function h() { setW(window.innerWidth); } window.addEventListener("resize", h); return function() { window.removeEventListener("resize", h); }; }, []);
+  return w;
+}
+
+async function callAI(messages, system, mode) {
+  var r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: messages, system: system, mode: mode || "fast" }) });
+  if (!r.ok) { var e = await r.json(); throw new Error(e.error || "API " + r.status); }
+  var d = await r.json();
+  return (d.content || []).filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("") || "";
+}
+
+function parseJ(raw) {
+  var c = raw.replace(/```json|```/g, "").trim();
+  var a = c.indexOf("["), b = c.lastIndexOf("]"), a2 = c.indexOf("{"), b2 = c.lastIndexOf("}");
+  if (a > -1 && b > a) return JSON.parse(c.slice(a, b + 1));
+  if (a2 > -1 && b2 > a2) return JSON.parse(c.slice(a2, b2 + 1));
+  throw new Error("No JSON");
+}
+
+var AC = { BUY: "#22c55e", ADD: "#22c55e", HOLD: "#64748b", TRIM: "#f59e0b", SELL: "#ef4444" };
+var CLR = ["#3b82f6","#8b5cf6","#22c55e","#f59e0b","#ef4444","#06b6d4","#ec4899","#f97316","#14b8a6","#a78bfa","#fb923c","#34d399","#f472b6","#60a5fa","#fbbf24","#4ade80","#c084fc","#38bdf8","#fb7185","#a3e635"];
+var SP = 'Sector MUST be: Technology, Healthcare, Financials, Consumer Discretionary, Communication Services, Industrials, Energy, Materials, Utilities, Real Estate, Consumer Staples, Broad Market, Dividend Equity, Commodities, or Cryptocurrency. NEVER N/A or Various or null.';
+
+function ActiveShape(props) {
+  var cx = props.cx, cy = props.cy, ir = props.innerRadius, or = props.outerRadius, sa = props.startAngle, ea = props.endAngle, fill = props.fill, pct = props.payload && props.payload.pct;
+  return <g>
+    <Sector cx={cx} cy={cy} innerRadius={ir - 4} outerRadius={or + 14} startAngle={sa} endAngle={ea} fill={fill} opacity={0.15} />
+    <Sector cx={cx} cy={cy} innerRadius={ir - 2} outerRadius={or + 10} startAngle={sa} endAngle={ea} fill={fill} opacity={0.3} />
+    <Sector cx={cx} cy={cy} innerRadius={ir - 1} outerRadius={or + 6} startAngle={sa} endAngle={ea} fill={fill} />
+    <text x={cx} y={cy - 8} textAnchor="middle" style={{ fontSize: 14, fill: "#fff", fontWeight: 700, fontFamily: "'Poppins',sans-serif" }}>{props.payload ? props.payload.name : ""}</text>
+    <text x={cx} y={cy + 10} textAnchor="middle" style={{ fontSize: 11, fill: "#94a3b8", fontWeight: 500, fontFamily: "'Poppins',sans-serif" }}>{pct ? pct + "%" : ""}</text>
+  </g>;
+}
+function renderLabel(props) {
+  if (parseFloat(props.pct) < 4) return null;
+  var RADIAN = Math.PI / 180;
+  var radius = props.outerRadius + 22;
+  var x = props.cx + radius * Math.cos(-props.midAngle * RADIAN);
+  var y = props.cy + radius * Math.sin(-props.midAngle * RADIAN);
+  return <text x={x} y={y} textAnchor={x > props.cx ? "start" : "end"} dominantBaseline="central" style={{ fontSize: 10, fill: "#cbd5e1", fontFamily: "'Poppins',sans-serif", fontWeight: 500, transition: "all 0.3s ease" }}>{props.name} {props.pct}%</text>;
+}
+function PTip(props) {
+  if (!props.active || !props.payload || !props.payload[0]) return null;
+  var d = props.payload[0].payload;
+  return <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}><div style={{ color: "#fff", fontWeight: 600 }}>{d.name}</div><div style={{ color: "#94a3b8" }}>{fmt(d.value)} ({d.pct}%)</div></div>;
+}
+function ChartTip(props) {
+  if (!props.active || !props.payload || !props.payload.length) return null;
+  return <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: "10px 14px", fontSize: 12 }}>
+    {props.label && <div style={{ color: "#fff", fontWeight: 600, marginBottom: 4 }}>{props.label}</div>}
+    {props.payload.map(function(p, i) { return <div key={i} style={{ color: p.color || "#94a3b8", display: "flex", justifyContent: "space-between", gap: 16 }}><span>{p.dataKey === "portfolio" ? "Portfolio" : p.dataKey === "contributed" ? "Contributed" : p.dataKey}</span><span style={{ fontWeight: 600 }}>{fmt(p.value)}</span></div>; })}
+  </div>;
+}
+
+function storageSave(key, data) { try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch (e) { return false; } }
+function storageLoad(key) { try { var r = localStorage.getItem(key); return r ? JSON.parse(r) : null; } catch (e) { return null; } }
+function storageList(prefix) { try { var keys = []; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k.startsWith(prefix)) keys.push(k); } return keys; } catch (e) { return []; } }
+function storageDelete(key) { try { localStorage.removeItem(key); } catch (e) {} }
+
+function App() {
+  var W = useWidth();
+  var mob = W < 768, sm = W < 480;
+  var pieH = sm ? 260 : mob ? 300 : 340;
+  var pieInner = sm ? 30 : mob ? 40 : 50;
+  var pieOuter = sm ? 60 : mob ? 75 : 95;
+
+  var cd = { background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, padding: mob ? 12 : 16 };
+  var tgS = function(bg, co) { return { display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 500, background: bg, color: co }; };
+  var inp = { background: "#0f172a", border: "1px solid #1e3a5f", color: "#e2e8f0", padding: "8px 10px", borderRadius: 5, fontSize: 14, outline: "none", width: "100%", WebkitAppearance: "none" };
+  var bS = function(on) { return { border: "none", borderRadius: 7, padding: mob ? "10px 14px" : "9px 18px", fontSize: mob ? 12 : 11, fontWeight: 600, cursor: on ? "pointer" : "not-allowed", background: on ? "#1d4ed8" : "#1e3a5f", color: on ? "#fff" : "#475569", touchAction: "manipulation" }; };
+  var gS = function(on) { return { border: "1px solid #1e3a5f", borderRadius: 7, padding: mob ? "10px 14px" : "9px 18px", fontSize: mob ? 12 : 11, fontWeight: 600, cursor: on ? "pointer" : "not-allowed", background: "#0f172a", color: on ? "#94a3b8" : "#475569", touchAction: "manipulation" }; };
+  var thd = { textAlign: "left", fontSize: 10, fontWeight: 600, letterSpacing: ".06em", textTransform: "uppercase", color: "#fff", padding: "8px", borderBottom: "1px solid #1e293b", whiteSpace: "nowrap" };
+  var tdd = { padding: "8px", borderBottom: "1px solid #111827", fontSize: 12, whiteSpace: "nowrap" };
+  var ttl = { fontSize: mob ? 14 : 16, fontWeight: 600, color: "#fff" };
+  var subS = { fontSize: 11, color: "#94a3b8", marginTop: 3 };
+  var lbl = { fontSize: 9, color: "#94a3b8", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4, fontWeight: 500 };
+  var vlS = function(c) { return { fontSize: mob ? 16 : 20, fontWeight: 600, color: c }; };
+  var sel = { background: "#0f172a", border: "1px solid #1e3a5f", color: "#e2e8f0", padding: "8px 10px", borderRadius: 5, fontSize: 14, outline: "none", cursor: "pointer" };
+  var fld = { fontSize: 10, color: "#fff", marginBottom: 3, fontWeight: 600 };
+  var cpB = { border: "1px solid #22c55e", borderRadius: 7, padding: mob ? "10px 14px" : "9px 18px", fontSize: mob ? 12 : 11, fontWeight: 600, cursor: "pointer", background: "rgba(34,197,94,0.1)", color: "#22c55e", touchAction: "manipulation" };
+
+  const [holdings, setHoldings] = useState(DEFAULT_HOLDINGS);
+  const [enriched, setEnriched] = useState({});
+  const [recs, setRecs] = useState(null);
+  const [rebal, setRebal] = useState(null);
+  const [loading, setLoading] = useState({});
+  const [tab, setTab] = useState("portfolio");
+  const [cash, setCash] = useState("0");
+  const [status, setStatus] = useState("");
+  const [err, setErr] = useState("");
+  const [fetching, setFetching] = useState({});
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [calcMonthly, setCalcMonthly] = useState("500");
+  const [calcYears, setCalcYears] = useState("10");
+  const [calcReturn, setCalcReturn] = useState("10");
+  const [chatMsgs, setChatMsgs] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [savedList, setSavedList] = useState([]);
+  const [saveName, setSaveName] = useState("");
+  const [showSavePanel, setShowSavePanel] = useState(false);
+  const [activeT, setActiveT] = useState(null);
+  const [activeS, setActiveS] = useState(null);
+  const [filterTicker, setFilterTicker] = useState(null);
+  const [filterSector, setFilterSector] = useState(null);
+  const chatEndRef = useRef(null);
+  const nid = useRef(16);
+  const loaded = useRef(false);
+
+  useEffect(function() {
+    if (loaded.current) return; loaded.current = true;
+    var keys = storageList("pf:");
+    if (keys && keys.length) { var items = keys.map(function(k) { var d = storageLoad(k); return d ? Object.assign({}, d, { key: k }) : null; }).filter(Boolean).sort(function(a, b) { return (b.savedAt || 0) - (a.savedAt || 0); }); setSavedList(items); }
+    var active = storageLoad("pf-active");
+    if (active && active.holdings && active.holdings.length > 0) { setHoldings(active.holdings); nid.current = Math.max.apply(null, active.holdings.map(function(h) { return h.id; })) + 1; }
+  }, []);
+  useEffect(function() { if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [chatMsgs]);
+  useEffect(function() { if (loaded.current) storageSave("pf-active", { holdings: holdings }); }, [holdings]);
+
+  var validH = holdings.filter(function(h) { return h.ticker.trim() && parseFloat(h.shares) > 0 && parseFloat(h.avgCost) > 0; });
+  var computed = useMemo(function() {
+    var tvv = 0, tcc = 0, dii = 0;
+    var poss = validH.map(function(h) { var tk = cleanTicker(h.ticker), e = enriched[tk] || {}; var price = e.currentPrice || parseFloat(h.avgCost), shares = parseFloat(h.shares), ac = parseFloat(h.avgCost); var v = price * shares, cost = ac * shares, div = (e.annualDividendPerShare || 0) * shares; tvv += v; tcc += cost; dii += div; return Object.assign({}, h, e, { ticker: tk, price: price, shares: shares, avgCost: ac, value: v, cost: cost }); });
+    return { pos: poss, tv: tvv, tc: tcc, di: dii, dy: tvv > 0 ? (dii / tvv) * 100 : 0 };
+  }, [validH, enriched]);
+  var pos = computed.pos, tv = computed.tv, tc = computed.tc, dy = computed.dy;
+
+  var sc = useMemo(function() {
+    if (!tv || !pos.length) return null;
+    var w = pos.map(function(p) { return p.value / tv; }); var wb = w.reduce(function(s, wi, i) { return s + wi * (pos[i].beta || 1); }, 0);
+    var t3 = w.slice().sort(function(a, b) { return b - a; }).slice(0, 3).reduce(function(s, x) { return s + x; }, 0);
+    var cr = pos.filter(function(p) { return p.assetType === "Crypto"; }).reduce(function(s, p) { return s + p.value / tv; }, 0);
+    var vr = (wb * 0.165) / Math.sqrt(252) * 2.326;
+    var cl = function(v, mx) { return Math.min(20, Math.max(0, v * 20 / mx)); };
+    var s1 = cl(wb, 2.5), s2 = Math.min(20, Math.max(0, (t3 - 0.1) / 0.7 * 20)), s3 = cl(cr, 0.5), s4 = Math.min(20, Math.max(0, (30 - pos.length) / 29 * 20)), s5 = cl(vr, 0.05);
+    return { total: s1 + s2 + s3 + s4 + s5, s1: s1, s2: s2, s3: s3, s4: s4, s5: s5, wb: wb, top3: t3, crypto: cr, n: pos.length };
+  }, [pos, tv]);
+  var scColor = sc ? (sc.total < 30 ? "#22c55e" : sc.total < 50 ? "#f59e0b" : sc.total < 70 ? "#f97316" : "#ef4444") : "#fff";
+  var scLabel = sc ? (sc.total < 20 ? "CONSERVATIVE" : sc.total < 35 ? "MOD-CONSERVATIVE" : sc.total < 50 ? "MODERATE" : sc.total < 65 ? "AGGRESSIVE" : "SPECULATIVE") : "";
+  var hasData = Object.keys(enriched).length > 0;
+  var isBusy = loading.fetch || loading.live;
+
+  var pieDataT = pos.map(function(p, i) { return { name: p.ticker, value: Math.round(p.value), pct: tv ? ((p.value / tv) * 100).toFixed(1) : "0", color: CLR[i % CLR.length] }; }).sort(function(a, b) { return b.value - a.value; });
+  var pieDataS = useMemo(function() { var m = {}; pos.forEach(function(p) { var s = p.sector || "Uncategorized"; m[s] = (m[s] || 0) + p.value; }); return Object.entries(m).map(function(e, i) { return { name: e[0], value: Math.round(e[1]), pct: tv ? ((e[1] / tv) * 100).toFixed(1) : "0", color: CLR[i % CLR.length] }; }).sort(function(a, b) { return b.value - a.value; }); }, [pos, tv]);
+  var filteredHoldings = holdings.filter(function(h) { if (!filterTicker && !filterSector) return true; var tk = cleanTicker(h.ticker), e = enriched[tk] || {}; if (filterTicker) return tk === filterTicker; if (filterSector) return (e.sector || "Uncategorized") === filterSector; return true; });
+
+  var startVal = tv > 0 ? tv : validH.reduce(function(s, h) { return s + (parseFloat(h.shares) || 0) * (parseFloat(h.avgCost) || 0); }, 0);
+  var cA = parseFloat(calcReturn) || 0, cM = parseFloat(calcMonthly) || 0, cY = parseInt(calcYears) || 5;
+  var proj = useMemo(function() {
+    if (startVal <= 0) return null; var mr = Math.pow(1 + cA / 100, 1 / 12) - 1, months = cY * 12, showM = cY < 4;
+    var data = [{ month: 0, label: "Now", portfolio: Math.round(startVal), contributed: Math.round(startVal), gains: 0 }];
+    var pv = startVal, cum = startVal;
+    for (var m = 1; m <= months; m++) { pv = pv * (1 + mr) + cM; cum += cM; var yr = Math.floor(m / 12), mo = m % 12; var label = showM ? (mo === 0 ? "Year " + yr : (m % 3 === 0 ? yr + "y" + mo + "m" : "")) : (mo === 0 ? "Year " + yr : ""); data.push({ month: m, label: label, portfolio: Math.round(pv), contributed: Math.round(cum), gains: Math.round(pv - cum) }); }
+    return { data: data, final: data[data.length - 1], showM: showM };
+  }, [startVal, cA, cM, cY]);
+
+  // Risk insights computed
+  var riskInsights = useMemo(function() {
+    if (!sc || !pos.length) return [];
+    var insights = [];
+    // Beta
+    if (sc.wb > 1.3) insights.push({ type: "warning", title: "High Market Sensitivity", text: "Portfolio beta of " + sc.wb.toFixed(2) + " means your portfolio amplifies market moves by " + ((sc.wb - 1) * 100).toFixed(0) + "%. A 10% market drop could mean a ~" + (sc.wb * 10).toFixed(0) + "% portfolio decline." });
+    else if (sc.wb < 0.8) insights.push({ type: "good", title: "Defensive Positioning", text: "Portfolio beta of " + sc.wb.toFixed(2) + " provides cushion against market downturns. Your portfolio moves less than the overall market." });
+    else insights.push({ type: "neutral", title: "Market-Aligned Beta", text: "Portfolio beta of " + sc.wb.toFixed(2) + " tracks close to the broader market. Your gains and losses will roughly mirror index movements." });
+    // Concentration
+    if (sc.top3 > 0.5) insights.push({ type: "warning", title: "Heavy Concentration", text: "Your top 3 positions make up " + (sc.top3 * 100).toFixed(1) + "% of your portfolio. A single bad earnings report could significantly impact your total value." });
+    else if (sc.top3 < 0.3) insights.push({ type: "good", title: "Well Distributed", text: "Top 3 positions are " + (sc.top3 * 100).toFixed(1) + "% — no single holding dominates. This spreads your risk across multiple names." });
+    // Crypto
+    if (sc.crypto > 0.2) insights.push({ type: "warning", title: "High Crypto Exposure", text: (sc.crypto * 100).toFixed(1) + "% in crypto assets. Crypto can swing 20-30% in a week. Consider if this matches your risk tolerance." });
+    else if (sc.crypto > 0.05) insights.push({ type: "neutral", title: "Moderate Crypto", text: (sc.crypto * 100).toFixed(1) + "% crypto exposure provides upside potential while limiting downside risk from volatility." });
+    // Diversification
+    if (sc.n < 8) insights.push({ type: "warning", title: "Limited Diversification", text: "Only " + sc.n + " holdings. Academic research suggests 15-25 positions for adequate diversification." });
+    else if (sc.n > 20) insights.push({ type: "good", title: "Strong Diversification", text: sc.n + " holdings provides broad exposure. Company-specific risk is well-diluted across your portfolio." });
+    // Dividend
+    if (dy > 2) insights.push({ type: "good", title: "Income Generation", text: dy.toFixed(2) + "% dividend yield generates roughly " + fmt(Math.round(tv * dy / 100)) + "/year in passive income from your " + fmt(Math.round(tv)) + " portfolio." });
+    // Largest position
+    var sorted = pos.slice().sort(function(a, b) { return b.value - a.value; });
+    if (sorted.length > 0) { var biggest = sorted[0]; var bigPct = (biggest.value / tv * 100); if (bigPct > 20) insights.push({ type: "warning", title: "Outsized Position: " + biggest.ticker, text: biggest.ticker + " is " + bigPct.toFixed(1) + "% of your portfolio (" + fmt(Math.round(biggest.value)) + "). Single-stock risk is elevated — a 20% drop in " + biggest.ticker + " would cost you ~" + fmt(Math.round(biggest.value * 0.2)) + "." }); }
+    // Biggest winner/loser
+    var withGL = pos.map(function(p) { return Object.assign({}, p, { gl: (p.price - p.avgCost) / p.avgCost * 100 }); }).sort(function(a, b) { return b.gl - a.gl; });
+    if (withGL.length > 0 && withGL[0].gl > 50) insights.push({ type: "neutral", title: "Big Winner: " + withGL[0].ticker, text: withGL[0].ticker + " is up " + withGL[0].gl.toFixed(0) + "% from your cost basis. Consider whether to take profits or let it ride based on your conviction." });
+    if (withGL.length > 0) { var worst = withGL[withGL.length - 1]; if (worst.gl < -20) insights.push({ type: "warning", title: "Underperformer: " + worst.ticker, text: worst.ticker + " is down " + Math.abs(worst.gl).toFixed(0) + "% from cost. Evaluate whether the thesis still holds or if it's time to cut losses." }); }
+    return insights;
+  }, [sc, pos, tv, dy]);
+
+  var doSave = useCallback(function() { var name = saveName.trim() || ("Portfolio " + new Date().toLocaleDateString()); var key = "pf:" + Date.now(); var entry = { name: name, holdings: holdings, savedAt: Date.now() }; var ok = storageSave(key, entry); if (ok) { setSavedList(function(prev) { return [Object.assign({}, entry, { key: key })].concat(prev); }); setSaveName(""); setShowSavePanel(false); setStatus("Saved: " + name); setTimeout(function() { setStatus(""); }, 2500); } }, [saveName, holdings]);
+  var loadSaved = useCallback(function(item) { setHoldings(item.holdings); nid.current = Math.max.apply(null, item.holdings.map(function(h) { return h.id; })) + 1; setEnriched({}); setShowSavePanel(false); setStatus("Loaded: " + item.name); setTimeout(function() { setStatus(""); }, 2500); }, []);
+  var deleteSaved = useCallback(function(item) { storageDelete(item.key); setSavedList(function(prev) { return prev.filter(function(x) { return x.key !== item.key; }); }); }, []);
+  var quickLoad = useCallback(async function() { if (!validH.length) return; setLoading(function(l) { return Object.assign({}, l, { fetch: true }); }); setErr(""); var tickers = Array.from(new Set(validH.map(function(h) { return cleanTicker(h.ticker); }))); setStatus("Loading " + tickers.length + " tickers..."); try { var raw = await callAI([{ role: "user", content: "Market data JSON: " + tickers.join(", ") + '. {"TICKER":{"currentPrice":number,"dividendYield":number,"annualDividendPerShare":number,"sector":"string","assetType":"Equity"|"ETF"|"Crypto","beta":number,"companyName":"string","marketCap":"string"}} ' + SP + " JSON ONLY." }], "ONLY valid JSON."); var p = parseJ(raw); setEnriched(function(prev) { return Object.assign({}, prev, p); }); setStatus("Loaded " + Object.keys(p).length); setTimeout(function() { setStatus(""); }, 3000); } catch (e) { setErr(e.message); setStatus(""); } setLoading(function(l) { return Object.assign({}, l, { fetch: false }); }); }, [validH.length]);
+  var liveOne = useCallback(async function(tk) { setFetching(function(f) { var n = Object.assign({}, f); n[tk] = true; return n; }); try { var raw = await callAI([{ role: "user", content: tk + " price,dividendYield,annualDividendPerShare,sector,assetType,beta,companyName,marketCap. " + SP + ' JSON:{"' + tk + '":{...}}' }], "ONLY JSON.", "search"); var p = parseJ(raw); setEnriched(function(prev) { return Object.assign({}, prev, p); }); } catch (e) { console.error(tk, e); } setFetching(function(f) { var n = Object.assign({}, f); delete n[tk]; return n; }); }, []);
+  var liveAll = useCallback(async function() { if (!validH.length) return; setLoading(function(l) { return Object.assign({}, l, { live: true }); }); setErr(""); var tickers = Array.from(new Set(validH.map(function(h) { return cleanTicker(h.ticker); }))); setProgress({ done: 0, total: tickers.length }); setStatus("Refreshing..."); var done = 0; await Promise.all(tickers.map(async function(tk) { await liveOne(tk); done++; setProgress(function(p) { return Object.assign({}, p, { done: done }); }); setStatus(done + "/" + tickers.length); })); setStatus("Done"); setTimeout(function() { setStatus(""); }, 3000); setLoading(function(l) { return Object.assign({}, l, { live: false }); }); setProgress({ done: 0, total: 0 }); }, [validH, liveOne]);
+  var genRecs = useCallback(async function() { if (!pos.length || !tv) return; setLoading(function(l) { return Object.assign({}, l, { recs: true }); }); setStatus("Generating..."); setErr(""); try { var info = pos.map(function(p) { return { t: p.ticker, v: p.value.toFixed(0), w: ((p.value / tv) * 100).toFixed(1) + "%", s: p.sector, ty: p.assetType, b: p.beta, gl: ((p.price - p.avgCost) / p.avgCost * 100).toFixed(1) + "%" }; }); var raw = await callAI([{ role: "user", content: "Analyze: $" + tv.toFixed(0) + ", risk=" + (sc ? sc.total.toFixed(1) : "?") + "/100\n" + JSON.stringify(info) + '\nJSON:[{"ticker":"X"|"PORTFOLIO","action":"BUY"|"SELL"|"HOLD"|"TRIM"|"ADD","priority":"HIGH"|"MEDIUM"|"LOW","headline":"short","reasoning":"2-3 sentences","suggestedAction":"step"}] Per-position+3-4 PORTFOLIO. JSON ONLY.' }], "JSON array only."); setRecs(parseJ(raw)); setStatus(""); } catch (e) { setErr(e.message); setStatus(""); } setLoading(function(l) { return Object.assign({}, l, { recs: false }); }); }, [pos, tv, sc, dy]);
+  var rebalPool = tv + (parseFloat(cash) || 0);
+  var genRebal = useCallback(async function() { if (!pos.length || !tv) return; setLoading(function(l) { return Object.assign({}, l, { rebal: true }); }); setStatus("Calculating..."); setErr(""); try { var info = pos.map(function(p) { return { t: p.ticker, v: p.value.toFixed(0), w: ((p.value / tv) * 100).toFixed(1) + "%", ty: p.assetType, b: p.beta || 1, s: p.sector }; }); var raw = await callAI([{ role: "user", content: "Optimal weights. $" + tv.toFixed(0) + "+$" + cash + "=$" + rebalPool.toFixed(0) + ".\n" + JSON.stringify(info) + '\ncrypto<=15%,no>20%,diversify. Sum=100. JSON:[{"ticker":"X","currentWeight":12.5,"targetWeight":10.0,"action":"TRIM"|"BUY"|"HOLD"|"SELL","rationale":"1 sentence"}]' }], "JSON array only."); var parsed = parseJ(raw); var ws = parsed.reduce(function(s, p) { return s + (p.targetWeight || 0); }, 0); if (Math.abs(ws - 100) > 0.5) parsed = parsed.map(function(p) { return Object.assign({}, p, { targetWeight: (p.targetWeight / ws) * 100 }); }); parsed = parsed.map(function(p) { var found = pos.find(function(x) { return x.ticker === p.ticker; }); var cv = found ? found.value : 0; var tv2 = (p.targetWeight / 100) * rebalPool; return Object.assign({}, p, { targetValue: tv2, dollarChange: tv2 - cv, curVal: cv }); }); setRebal(parsed); setStatus(""); } catch (e) { setErr(e.message); setStatus(""); } setLoading(function(l) { return Object.assign({}, l, { rebal: false }); }); }, [pos, tv, sc, cash, rebalPool]);
+  var copyRebalToHoldings = useCallback(function() { if (!rebal || !rebal.length) return; var newH = rebal.map(function(r) { var found = pos.find(function(x) { return x.ticker === r.ticker; }); var price = found ? found.price : 0; var shares = price > 0 ? (r.targetValue || 0) / price : 0; return { id: nid.current++, ticker: r.ticker, shares: shares.toFixed(4), avgCost: price > 0 ? price.toFixed(2) : "0" }; }); setHoldings(newH); setTab("portfolio"); setStatus("Imported!"); setTimeout(function() { setStatus(""); }, 3000); }, [rebal, pos]);
+  var sendChat = useCallback(async function() { if (!chatInput.trim() || chatLoading) return; var msg = chatInput.trim(); setChatInput(""); var next = chatMsgs.concat([{ role: "user", content: msg }]); setChatMsgs(next); setChatLoading(true); try { var raw = await callAI(next.map(function(m) { return { role: m.role, content: m.content }; }), "You are an expert portfolio builder. Explain WHY for each pick. Suggest specific tickers with allocation %. Be conversational."); setChatMsgs(function(prev) { return prev.concat([{ role: "assistant", content: raw }]); }); } catch (e) { setChatMsgs(function(prev) { return prev.concat([{ role: "assistant", content: "Error: " + e.message }]); }); } setChatLoading(false); }, [chatInput, chatMsgs, chatLoading]);
+  var copyBuildToHoldings = useCallback(async function() { if (!chatMsgs.length || chatLoading) return; setChatLoading(true); setStatus("Extracting..."); try { var last = ""; for (var i = chatMsgs.length - 1; i >= 0; i--) { if (chatMsgs[i].role === "assistant") { last = chatMsgs[i].content; break; } } if (!last) throw new Error("No suggestion"); var raw = await callAI([{ role: "user", content: "Extract portfolio from text into JSON.\n\n" + last + '\n\nJSON:[{"ticker":"AAPL","weight":25,"price":150}] JSON ONLY.' }], "JSON array only."); var parsed = parseJ(raw); var total = tv > 0 ? tv : 10000; var newH = parsed.map(function(p) { var val = (p.weight / 100) * total; var shares = p.price > 0 ? val / p.price : 0; return { id: nid.current++, ticker: p.ticker.toUpperCase(), shares: shares.toFixed(4), avgCost: p.price > 0 ? p.price.toFixed(2) : "0" }; }); setHoldings(newH); setTab("portfolio"); setStatus("Portfolio imported!"); setTimeout(function() { setStatus(""); }, 4000); } catch (e) { setErr("Could not extract: " + e.message); } setChatLoading(false); setStatus(""); }, [chatMsgs, chatLoading, tv]);
+
+  var TI = {
+    portfolio: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>,
+    risk: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+    recommendations: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>,
+    rebalancing: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>,
+    build: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+    calculator: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+  };
+  var TABS = [["portfolio", "Holdings"], ["risk", "Risk"], ["recommendations", "AI Advice"], ["rebalancing", "Rebalance"], ["build", "Build"], ["calculator", "Calculator"]];
+  var gridCols = sm ? "repeat(2,1fr)" : mob ? "repeat(3,1fr)" : "repeat(5,1fr)";
+
+  return (
+    <div style={{ fontFamily: "'Poppins',sans-serif", background: "#0a0e1a", minHeight: "100vh", color: "#e2e8f0" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}} *{box-sizing:border-box} input,button,select{font-family:inherit} .recharts-pie-sector{transition:opacity 0.4s ease,transform 0.3s ease} .recharts-active-shape{transition:all 0.3s cubic-bezier(.4,0,.2,1)}`}</style>
+
+      <div style={{ borderBottom: "1px solid #1e293b", padding: mob ? "0 12px" : "0 24px" }}>
+        <div style={{ maxWidth: 1300, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: mob ? 56 : 64 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: mob ? 28 : 34, height: mob ? 28 : 34, background: "linear-gradient(135deg,#1d4ed8,#7c3aed)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width={mob ? 14 : 18} height={mob ? 14 : 18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 20V10" /><path d="M12 20V4" /><path d="M6 20v-6" /></svg></div>
+            <div style={{ fontSize: mob ? 14 : 17, fontWeight: 600, color: "#fff" }}>Portfolio Insights</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: mob ? 11 : 13, color: "#94a3b8", fontWeight: 600 }}>Risk Appetite</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6, justifyContent: "flex-end" }}>
+              <div style={{ fontSize: mob ? 22 : 28, fontWeight: 700, color: sc ? scColor : "#fff", lineHeight: 1 }}>{sc ? sc.total.toFixed(1) : "TBD"}</div>
+              {sc && <div style={{ fontSize: mob ? 11 : 13, fontWeight: 600, color: scColor }}>{scLabel}</div>}
+            </div>
+          </div>
+        </div>
+        <div style={{ maxWidth: 1300, margin: "0 auto", display: "flex", gap: 0, overflowX: "auto", scrollbarWidth: "none" }}>
+          {TABS.map(function(t) { return <button key={t[0]} onClick={function() { setTab(t[0]); }} style={{ background: "none", border: "none", color: tab === t[0] ? "#3b82f6" : "#94a3b8", fontSize: mob ? 11 : 13, fontWeight: tab === t[0] ? 600 : 500, padding: mob ? "8px 12px" : "10px 18px", cursor: "pointer", borderBottom: tab === t[0] ? "2px solid #3b82f6" : "2px solid transparent", whiteSpace: "nowrap", flexShrink: 0, touchAction: "manipulation", display: "flex", alignItems: "center", gap: 5 }}>{TI[t[0]]}{t[1]}</button>; })}
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1300, margin: "0 auto", padding: mob ? "12px" : "20px 24px" }}>
+        {status && <div style={{ background: "#0f172a", border: "1px solid #1e3a5f", borderRadius: 8, padding: "8px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: "#3b82f6", animation: "pulse 2s infinite" }} /><span style={{ fontSize: 12, color: "#94a3b8" }}>{status}</span></div>}
+        {err && <div style={{ background: "#1c0f0f", border: "1px solid #7f1d1d", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "#fca5a5" }}>{err} <button onClick={function() { setErr(""); }} style={{ background: "none", border: "none", color: "#fca5a5", cursor: "pointer" }}>✕</button></div>}
+
+        {/* PORTFOLIO */}
+        {tab === "portfolio" && <div>
+          {hasData && tv > 0 && <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 14 }}>
+            <div style={cd}><div style={ttl}>Ticker Allocation</div><div style={{ height: pieH, marginTop: 8 }}><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={pieDataT} dataKey="value" cx="50%" cy="50%" innerRadius={pieInner} outerRadius={pieOuter} paddingAngle={2} stroke="none" activeIndex={activeT} activeShape={ActiveShape} onMouseEnter={function(_, i) { setActiveT(i); }} onMouseLeave={function() { setActiveT(null); }} onClick={function(d) { setFilterSector(null); setFilterTicker(filterTicker === d.name ? null : d.name); }} label={renderLabel} labelLine={false} style={{ cursor: "pointer", outline: "none" }} animationBegin={0} animationDuration={600} animationEasing="ease-out">{pieDataT.map(function(d, i) { var isActive = activeT === i; var isFiltered = filterTicker && filterTicker !== d.name; return <Cell key={i} fill={d.color} opacity={isFiltered ? 0.2 : isActive ? 1 : 0.85} stroke={isActive ? d.color : "none"} strokeWidth={isActive ? 2 : 0} />; })}</Pie>{activeT == null && <text x="50%" y="48%" textAnchor="middle" style={{ fontSize: 13, fill: "#fff", fontWeight: 600, fontFamily: "'Poppins',sans-serif" }}>{fmt(Math.round(tv))}</text>}{activeT == null && <text x="50%" y="56%" textAnchor="middle" style={{ fontSize: 10, fill: "#64748b", fontFamily: "'Poppins',sans-serif" }}>{pos.length} tickers</text>}</PieChart></ResponsiveContainer></div></div>
+            <div style={cd}><div style={ttl}>Sector Allocation</div><div style={{ height: pieH, marginTop: 8 }}><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={pieDataS} dataKey="value" cx="50%" cy="50%" innerRadius={pieInner} outerRadius={pieOuter} paddingAngle={2} stroke="none" activeIndex={activeS} activeShape={ActiveShape} onMouseEnter={function(_, i) { setActiveS(i); }} onMouseLeave={function() { setActiveS(null); }} onClick={function(d) { setFilterTicker(null); setFilterSector(filterSector === d.name ? null : d.name); }} label={renderLabel} labelLine={false} style={{ cursor: "pointer", outline: "none" }} animationBegin={200} animationDuration={600} animationEasing="ease-out">{pieDataS.map(function(d, i) { var isActive = activeS === i; var isFiltered = filterSector && filterSector !== d.name; return <Cell key={i} fill={d.color} opacity={isFiltered ? 0.2 : isActive ? 1 : 0.85} stroke={isActive ? d.color : "none"} strokeWidth={isActive ? 2 : 0} />; })}</Pie>{activeS == null && <text x="50%" y="48%" textAnchor="middle" style={{ fontSize: 13, fill: "#fff", fontWeight: 600, fontFamily: "'Poppins',sans-serif" }}>{pieDataS.length}</text>}{activeS == null && <text x="50%" y="56%" textAnchor="middle" style={{ fontSize: 10, fill: "#64748b", fontFamily: "'Poppins',sans-serif" }}>sectors</text>}</PieChart></ResponsiveContainer></div></div>
+          </div>}
+          {tv > 0 && <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 8, marginBottom: 14 }}>{[{ l: "Total Value", v: fmt(Math.round(tv)), c: "#fff" }, { l: "Total Cost", v: fmt(Math.round(tc)), c: "#94a3b8" }, { l: "Gain / Loss", v: (tv - tc >= 0 ? "+" : "") + fmt(Math.round(Math.abs(tv - tc))), c: tv >= tc ? "#22c55e" : "#ef4444" }, { l: "Div Yield", v: dy.toFixed(2) + "%", c: "#a78bfa" }, { l: "Holdings", v: pos.length, c: "#fff" }].map(function(m) { return <div key={m.l} style={cd}><div style={lbl}>{m.l}</div><div style={vlS(m.c)}>{m.v}</div></div>; })}</div>}
+          <div style={cd}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={ttl}>Holdings</div>{(filterTicker || filterSector) && <button onClick={function() { setFilterTicker(null); setFilterSector(null); }} style={Object.assign({}, tgS("rgba(59,130,246,.15)", "#3b82f6"), { cursor: "pointer", border: "none", padding: "4px 10px", fontSize: 11 })}>Showing: {filterTicker || filterSector} ✕</button>}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button style={gS(true)} onClick={function() { setHoldings(function(h) { return h.concat([{ id: nid.current++, ticker: "", shares: "", avgCost: "" }]); }); }}>+ Add</button>
+                <button style={gS(true)} onClick={function() { setShowSavePanel(!showSavePanel); }}>{showSavePanel ? "Close" : <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save/Load</span>}</button>
+                {hasData && <button style={gS(!isBusy)} disabled={isBusy} onClick={liveAll}>{loading.live ? progress.done + "/" + progress.total : <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Live</span>}</button>}
+                <button style={bS(!isBusy && validH.length > 0)} disabled={isBusy || !validH.length} onClick={quickLoad}>{loading.fetch ? "Loading..." : <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="#fff" stroke="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Quick Load</span>}</button>
+              </div>
+            </div>
+            {showSavePanel && <div style={{ background: "#0a0e1a", border: "1px solid #1e3a5f", borderRadius: 8, padding: 14, marginBottom: 14 }}><div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}><input value={saveName} onChange={function(e) { setSaveName(e.target.value); }} placeholder="Name this portfolio..." style={Object.assign({}, inp, { flex: 1, minWidth: 150 })} /><button style={bS(true)} onClick={doSave}>Save</button></div>{savedList.length > 0 ? savedList.map(function(item, i) { return <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderTop: i > 0 ? "1px solid #1e293b" : "none" }}><div><div style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 500 }}>{item.name}</div><div style={{ fontSize: 10, color: "#64748b" }}>{item.holdings.length} holdings · {new Date(item.savedAt).toLocaleDateString()}</div></div><div style={{ display: "flex", gap: 6 }}><button onClick={function() { loadSaved(item); }} style={Object.assign({}, gS(true), { padding: "6px 12px", fontSize: 11 })}>Load</button><button onClick={function() { deleteSaved(item); }} style={{ background: "none", border: "1px solid #7f1d1d", borderRadius: 5, padding: "6px 10px", color: "#fca5a5", fontSize: 11, cursor: "pointer" }}>✕</button></div></div>; }) : <div style={{ fontSize: 12, color: "#64748b", textAlign: "center", padding: 8 }}>No saved portfolios</div>}</div>}
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}><table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}><thead><tr>{["Ticker", "Name", "Shares", "Cost", "Price", "Value", "G/L%", "Wt%", "Type", "Sector", "β", "Div", ""].map(function(h) { return <th key={h} style={thd}>{h}</th>; })}</tr></thead><tbody>{filteredHoldings.map(function(h) { var tk = cleanTicker(h.ticker), e = enriched[tk] || {}, price = e.currentPrice || 0, v2 = price * parseFloat(h.shares || 0); var gl2 = h.avgCost && price ? ((price - parseFloat(h.avgCost)) / parseFloat(h.avgCost)) * 100 : 0; var wt = tv ? (v2 / tv) * 100 : 0, isCr = e.assetType === "Crypto", isF = !!fetching[tk], ld = !!e.currentPrice; return <tr key={h.id} style={{ background: isF ? "rgba(59,130,246,.06)" : ld ? "rgba(34,197,94,.02)" : "transparent" }}><td style={tdd}><input value={h.ticker} onChange={function(ev) { setHoldings(function(hs) { return hs.map(function(x) { return x.id === h.id ? Object.assign({}, x, { ticker: ev.target.value.toUpperCase() }) : x; }); }); }} placeholder="AAPL" style={Object.assign({}, inp, { width: 68, fontWeight: 600, color: "#60a5fa" })} /></td><td style={Object.assign({}, tdd, { color: "#94a3b8", fontSize: 11 })}>{isF ? <span style={{ color: "#3b82f6", animation: "pulse 1.5s infinite" }}>...</span> : e.companyName || "—"}</td><td style={tdd}><input value={h.shares} onChange={function(ev) { setHoldings(function(hs) { return hs.map(function(x) { return x.id === h.id ? Object.assign({}, x, { shares: ev.target.value }) : x; }); }); }} style={Object.assign({}, inp, { width: 60 })} /></td><td style={tdd}><input value={h.avgCost} onChange={function(ev) { setHoldings(function(hs) { return hs.map(function(x) { return x.id === h.id ? Object.assign({}, x, { avgCost: ev.target.value }) : x; }); }); }} style={Object.assign({}, inp, { width: 74 })} /></td><td style={Object.assign({}, tdd, { color: "#fff", fontWeight: 500 })}>{price ? "$" + price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "–"}</td><td style={Object.assign({}, tdd, { fontWeight: 600 })}>{v2 ? fmt(Math.round(v2)) : "–"}</td><td style={Object.assign({}, tdd, { color: gl2 >= 0 ? "#22c55e" : "#ef4444", fontWeight: 500 })}>{price && h.avgCost ? (gl2 >= 0 ? "+" : "") + gl2.toFixed(1) + "%" : "–"}</td><td style={Object.assign({}, tdd, { color: "#cbd5e1" })}>{wt ? wt.toFixed(1) + "%" : "–"}</td><td style={tdd}>{e.assetType ? <span style={tgS(isCr ? "rgba(124,58,237,.2)" : "rgba(59,130,246,.12)", isCr ? "#a78bfa" : "#60a5fa")}>{e.assetType}</span> : "–"}</td><td style={Object.assign({}, tdd, { color: "#94a3b8", fontSize: 11 })}>{e.sector || "–"}</td><td style={tdd}>{e.beta != null ? e.beta.toFixed(2) : "–"}</td><td style={Object.assign({}, tdd, { color: "#a78bfa" })}>{e.dividendYield != null ? e.dividendYield.toFixed(2) + "%" : "–"}</td><td style={tdd}><button onClick={function() { if (tk && !isF) liveOne(tk); }} style={{ background: "#0f172a", color: "#3b82f6", border: "1px solid #1e3a5f", borderRadius: 5, padding: "6px 10px", cursor: "pointer", fontSize: 12, touchAction: "manipulation" }}>⟳</button><button onClick={function() { setHoldings(function(hs) { return hs.filter(function(x) { return x.id !== h.id; }); }); }} style={{ background: "#7f1d1d", color: "#fca5a5", border: "none", borderRadius: 5, padding: "6px 10px", cursor: "pointer", fontSize: 12, marginLeft: 4, touchAction: "manipulation" }}>✕</button></td></tr>; })}</tbody></table></div>
+            {!hasData && !isBusy && <div style={{ textAlign: "center", padding: "16px 0", color: "#64748b", fontSize: 12 }}>Click <strong style={{ color: "#3b82f6" }}>⚡ Quick Load</strong> to fetch prices</div>}
+          </div>
+        </div>}
+
+        {/* ═══ RISK ═══ */}
+        {tab === "risk" && <div>
+          {!sc ? <div style={Object.assign({}, cd, { textAlign: "center", padding: 48, color: "#64748b" })}>Load data first to see your Risk Appetite score.</div> : <div>
+            {/* Score + Breakdown */}
+            <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 2fr", gap: 14, marginBottom: 14 }}>
+              <div style={Object.assign({}, cd, { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 24 })}>
+                <div style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>Risk Appetite</div>
+                <div style={{ fontSize: mob ? 48 : 60, fontWeight: 700, color: scColor, lineHeight: 1 }}>{sc.total.toFixed(1)}</div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>/100 — higher = riskier</div>
+                <span style={tgS(scColor + "22", scColor)}>{scLabel}</span>
+              </div>
+              <div style={cd}>
+                <div style={ttl}>Score Breakdown</div>
+                <div style={{ marginTop: 14 }}>{[{ l: "Beta / Volatility", s: sc.s1, d: "β=" + sc.wb.toFixed(2) }, { l: "Concentration", s: sc.s2, d: "Top 3 = " + (sc.top3 * 100).toFixed(1) + "%" }, { l: "Crypto Exposure", s: sc.s3, d: (sc.crypto * 100).toFixed(1) + "% of portfolio" }, { l: "Diversification", s: sc.s4, d: sc.n + " positions" }, { l: "Value at Risk", s: sc.s5, d: "99% daily VaR" }].map(function(f) { return <div key={f.l} style={{ marginBottom: 12 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}><span style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 500 }}>{f.l}</span><span style={{ fontSize: 11, color: "#fff", fontWeight: 600 }}>{f.s.toFixed(1)} <span style={{ color: "#64748b", fontWeight: 400 }}>/20 — {f.d}</span></span></div><div style={{ height: 6, background: "#1e293b", borderRadius: 3, overflow: "hidden" }}><div style={{ height: "100%", width: (f.s / 20 * 100) + "%", background: f.s < 7 ? "#22c55e" : f.s < 14 ? "#f59e0b" : "#ef4444", borderRadius: 3, transition: "width 0.5s" }} /></div></div>; })}</div>
+              </div>
+            </div>
+
+            {/* Key Metrics */}
+            <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 8, marginBottom: 14 }}>
+              {[{ l: "Portfolio Beta", v: sc.wb.toFixed(2), c: sc.wb > 1.3 ? "#f59e0b" : "#22c55e" },
+                { l: "Top 3 Weight", v: (sc.top3 * 100).toFixed(1) + "%", c: sc.top3 > 0.5 ? "#f59e0b" : "#22c55e" },
+                { l: "Crypto %", v: (sc.crypto * 100).toFixed(1) + "%", c: sc.crypto > 0.2 ? "#ef4444" : "#22c55e" },
+                { l: "Positions", v: sc.n, c: sc.n < 10 ? "#f59e0b" : "#22c55e" },
+                { l: "Div Income", v: fmt(Math.round(tv * dy / 100)) + "/yr", c: "#a78bfa" }
+              ].map(function(m) { return <div key={m.l} style={cd}><div style={lbl}>{m.l}</div><div style={vlS(m.c)}>{m.v}</div></div>; })}
+            </div>
+
+            {/* Insights */}
+            {riskInsights.length > 0 && <div style={Object.assign({}, cd, { marginBottom: 14 })}>
+              <div style={ttl}>Portfolio Insights</div>
+              <div style={{ marginTop: 12 }}>{riskInsights.map(function(insight, i) {
+                var ic = insight.type === "warning" ? "#f59e0b" : insight.type === "good" ? "#22c55e" : "#3b82f6";
+                var bg = insight.type === "warning" ? "rgba(245,158,11,.08)" : insight.type === "good" ? "rgba(34,197,94,.08)" : "rgba(59,130,246,.08)";
+                return <div key={i} style={{ padding: "12px 14px", borderRadius: 8, marginBottom: 8, background: bg, borderLeft: "3px solid " + ic }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: ic, marginBottom: 4 }}>{insight.type === "warning" ? "⚠️" : insight.type === "good" ? "✓" : "ℹ️"} {insight.title}</div>
+                  <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.6 }}>{insight.text}</div>
+                </div>;
+              })}</div>
+            </div>}
+
+            {/* Position Risk Table */}
+            <div style={cd}>
+              <div style={ttl}>Position Risk Detail</div>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 12 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+                  <thead><tr>{["Ticker", "Value", "Weight", "Type", "Beta", "β Contrib", "G/L", "Sector", "Signal"].map(function(h) { return <th key={h} style={thd}>{h}</th>; })}</tr></thead>
+                  <tbody>{pos.slice().sort(function(a, b) { return b.value - a.value; }).map(function(p, i) {
+                    var w = p.value / tv, bc = w * (p.beta || 1);
+                    var gl = (p.price - p.avgCost) / p.avgCost * 100;
+                    var sig = p.assetType === "Crypto" ? "CRYPTO" : (p.beta || 1) > 1.5 ? "HIGH β" : w > 0.2 ? "OVERWT" : gl < -20 ? "LOSS" : "OK";
+                    var sc2 = { CRYPTO: "#a78bfa", "HIGH β": "#ef4444", OVERWT: "#f59e0b", LOSS: "#ef4444", OK: "#22c55e" }[sig];
+                    return <tr key={i}>
+                      <td style={Object.assign({}, tdd, { color: "#60a5fa", fontWeight: 600 })}>{p.ticker}</td>
+                      <td style={Object.assign({}, tdd, { color: "#e2e8f0" })}>{fmt(Math.round(p.value))}</td>
+                      <td style={Object.assign({}, tdd, { color: "#cbd5e1" })}>{(w * 100).toFixed(1)}%</td>
+                      <td style={tdd}><span style={tgS(p.assetType === "Crypto" ? "rgba(124,58,237,.2)" : "rgba(59,130,246,.1)", p.assetType === "Crypto" ? "#a78bfa" : "#60a5fa")}>{p.assetType || "Equity"}</span></td>
+                      <td style={Object.assign({}, tdd, { color: (p.beta || 1) > 1.5 ? "#ef4444" : "#e2e8f0" })}>{p.beta != null ? p.beta.toFixed(2) : "–"}</td>
+                      <td style={Object.assign({}, tdd, { color: "#cbd5e1" })}>{bc.toFixed(3)}</td>
+                      <td style={Object.assign({}, tdd, { color: gl >= 0 ? "#22c55e" : "#ef4444", fontWeight: 500 })}>{(gl >= 0 ? "+" : "") + gl.toFixed(1)}%</td>
+                      <td style={Object.assign({}, tdd, { color: "#94a3b8", fontSize: 11 })}>{p.sector || "–"}</td>
+                      <td style={tdd}><span style={tgS(sc2 + "22", sc2)}>{sig}</span></td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div>
+            </div>
+          </div>}
+        </div>}
+
+        {/* AI ADVICE */}
+        {tab === "recommendations" && <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}><div style={ttl}>AI Recommendations</div><button style={bS(!loading.recs && hasData)} disabled={loading.recs || !hasData} onClick={genRecs}>{loading.recs ? "Analyzing..." : <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>Generate</span>}</button></div>
+          {!recs ? <div style={Object.assign({}, cd, { textAlign: "center", padding: 48, color: "#64748b" })}>{hasData ? "Click Generate" : "Quick Load first"}</div> : <div style={{ display: "grid", gap: 10 }}>
+            {recs.filter(function(r) { return r.ticker === "PORTFOLIO"; }).map(function(r, i) { return <div key={i} style={Object.assign({}, cd, { borderLeft: "3px solid " + (AC[r.action] || "#64748b") })}><div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}><span style={tgS("#1e3a5f", "#60a5fa")}>PORTFOLIO</span><span style={tgS((AC[r.action] || "#64748b") + "22", AC[r.action] || "#64748b")}>{r.action}</span></div><div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 6 }}>{r.headline}</div><div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.6 }}>{r.reasoning}</div></div>; })}
+            <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: 10 }}>{recs.filter(function(r) { return r.ticker !== "PORTFOLIO"; }).map(function(r, i) { return <div key={i} style={Object.assign({}, cd, { borderLeft: "3px solid " + (AC[r.action] || "#64748b") })}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><span style={{ fontSize: 15, fontWeight: 700, color: "#60a5fa" }}>{r.ticker}</span><span style={tgS((AC[r.action] || "#64748b") + "22", AC[r.action] || "#64748b")}>{r.action}</span></div><div style={{ fontSize: 12, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{r.headline}</div><div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.6 }}>{r.reasoning}</div></div>; })}</div>
+          </div>}
+        </div>}
+
+        {/* REBALANCE */}
+        {tab === "rebalancing" && <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}><div><div style={ttl}>AI Rebalancing</div><div style={subS}>Target allocation with exact $ amounts</div></div><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><div><div style={fld}>Cash ($)</div><input value={cash} onChange={function(e) { setCash(e.target.value); }} style={Object.assign({}, inp, { width: 100 })} /></div><button style={Object.assign({}, bS(!loading.rebal && hasData), { marginTop: 18 })} disabled={loading.rebal || !hasData} onClick={genRebal}>{loading.rebal ? "..." : <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>Plan</span>}</button></div></div>
+          {!rebal ? <div style={Object.assign({}, cd, { textAlign: "center", padding: 48, color: "#64748b" })}>{hasData ? "Click Plan" : "Quick Load first"}</div> : <div>
+            <div style={{ marginBottom: 12 }}><button style={cpB} onClick={copyRebalToHoldings}><span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>Copy to Holdings</span></button></div>
+            <div style={cd}><div style={{ marginBottom: 12, fontSize: 11, color: "#94a3b8" }}>Pool: <strong style={{ color: "#22c55e" }}>{fmt(Math.round(rebalPool))}</strong></div><div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}><thead><tr>{["Ticker", "Current $", "Cur%", "Target%", "Target $", "Change $", "Action", "Why"].map(function(h) { return <th key={h} style={thd}>{h}</th>; })}</tr></thead><tbody>{rebal.sort(function(a, b) { return Math.abs(b.dollarChange) - Math.abs(a.dollarChange); }).map(function(r, i) { return <tr key={i}><td style={Object.assign({}, tdd, { color: "#60a5fa", fontWeight: 600 })}>{r.ticker}</td><td style={Object.assign({}, tdd, { color: "#cbd5e1" })}>{fmt(Math.round(r.curVal || 0))}</td><td style={Object.assign({}, tdd, { color: "#94a3b8" })}>{(r.currentWeight || 0).toFixed(1)}%</td><td style={Object.assign({}, tdd, { color: "#fff", fontWeight: 600 })}>{(r.targetWeight || 0).toFixed(1)}%</td><td style={Object.assign({}, tdd, { color: "#fff", fontWeight: 600 })}>{fmt(Math.round(r.targetValue || 0))}</td><td style={Object.assign({}, tdd, { color: r.dollarChange >= 0 ? "#22c55e" : "#ef4444", fontWeight: 600 })}>{r.dollarChange >= 0 ? "+" : "-"}{fmt(Math.round(Math.abs(r.dollarChange)))}</td><td style={tdd}><span style={tgS((AC[r.action] || "#64748b") + "22", AC[r.action] || "#64748b")}>{r.action}</span></td><td style={Object.assign({}, tdd, { color: "#94a3b8", fontSize: 11, whiteSpace: "normal", minWidth: 120 })}>{r.rationale}</td></tr>; })}</tbody></table></div></div>
+          </div>}
+        </div>}
+
+        {/* BUILD */}
+        {tab === "build" && <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}><div><div style={ttl}>Portfolio Builder</div><div style={subS}>Describe your goals and refine</div></div>{chatMsgs.length > 0 && <button style={cpB} onClick={copyBuildToHoldings} disabled={chatLoading}>{chatLoading ? "Extracting..." : <span style={{ display: "flex", alignItems: "center", gap: 5 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>Copy to Holdings</span>}</button>}</div>
+          <div style={Object.assign({}, cd, { display: "flex", flexDirection: "column", height: mob ? "calc(100vh - 200px)" : "calc(100vh - 240px)", minHeight: 300 })}>
+            <div style={{ flex: 1, overflowY: "auto", marginBottom: 10 }}>
+              {chatMsgs.length === 0 && <div style={{ textAlign: "center", padding: mob ? "40px 16px" : "60px 20px", color: "#475569" }}><div style={{ fontSize: 14, fontWeight: 600, color: "#64748b", marginBottom: 8 }}>Start a conversation</div><div style={{ fontSize: 12, maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>Try: "Build a growth portfolio, $50k, moderate risk"</div></div>}
+              {chatMsgs.map(function(m, i) { return <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", marginBottom: 8 }}><div style={{ maxWidth: mob ? "90%" : "80%", padding: "10px 14px", borderRadius: 12, background: m.role === "user" ? "#1d4ed8" : "#1e293b", color: "#fff", fontSize: mob ? 12 : 13, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{m.content}</div></div>; })}
+              {chatLoading && <div style={{ display: "flex", marginBottom: 8 }}><div style={{ background: "#1e293b", padding: "10px 14px", borderRadius: 12, display: "flex", gap: 4 }}>{[0, 1, 2].map(function(i) { return <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "#3b82f6", animation: "pulse 1.4s ease-in-out " + (i * 0.2) + "s infinite" }} />; })}</div></div>}
+              <div ref={chatEndRef} />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}><input value={chatInput} onChange={function(e) { setChatInput(e.target.value); }} onKeyDown={function(e) { if (e.key === "Enter") { e.preventDefault(); sendChat(); } }} placeholder="Describe your ideal portfolio..." style={Object.assign({}, inp, { flex: 1, padding: "12px", fontSize: 14, borderRadius: 10 })} /><button onClick={sendChat} disabled={chatLoading || !chatInput.trim()} style={Object.assign({}, bS(!chatLoading && chatInput.trim()), { borderRadius: 10, padding: mob ? "12px 16px" : "12px 20px", fontSize: 14, display: "flex", alignItems: "center", gap: 6 })}><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button></div>
+          </div>
+        </div>}
+
+        {/* CALCULATOR */}
+        {tab === "calculator" && <div>
+          <div style={ttl}>Growth Calculator</div>
+          <div style={Object.assign({}, cd, { marginTop: 14, marginBottom: 14, display: "flex", gap: mob ? 12 : 20, alignItems: "flex-end", flexWrap: "wrap" })}>
+            <div><div style={fld}>Starting</div><div style={{ fontSize: mob ? 14 : 16, fontWeight: 600, color: "#fff" }}>{fmt(Math.round(startVal))}</div></div>
+            <div><div style={fld}>Monthly ($)</div><input value={calcMonthly} onChange={function(e) { setCalcMonthly(e.target.value); }} style={Object.assign({}, inp, { width: 100 })} /></div>
+            <div><div style={fld}>Return (%)</div><input value={calcReturn} onChange={function(e) { setCalcReturn(e.target.value); }} style={Object.assign({}, inp, { width: 80 })} /></div>
+            <div><div style={fld}>Years</div><select value={calcYears} onChange={function(e) { setCalcYears(e.target.value); }} style={sel}>{[1, 2, 3, 5, 7, 10, 15, 20, 25, 30].map(function(y) { return <option key={y} value={y}>{y}</option>; })}</select></div>
+          </div>
+          {proj && <div>
+            <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 8, marginBottom: 14 }}>
+              {[{ l: "Starting", v: fmt(Math.round(startVal)), c: "#fff" }, { l: cY + "yr Value", v: fmt(proj.final.portfolio), c: "#22c55e" }, { l: "Contributed", v: fmt(proj.final.contributed), c: "#3b82f6" }, { l: "Gains", v: fmt(proj.final.gains), c: "#a78bfa" }, { l: "Growth", v: "+" + ((proj.final.portfolio / startVal - 1) * 100).toFixed(0) + "%", c: "#f59e0b" }].map(function(m) { return <div key={m.l} style={cd}><div style={lbl}>{m.l}</div><div style={vlS(m.c)}>{m.v}</div></div>; })}
+            </div>
+            <div style={Object.assign({}, cd, { marginBottom: 14 })}><div style={ttl}>Projected Growth</div><div style={{ height: mob ? 240 : 320, marginTop: 16 }}><ResponsiveContainer width="100%" height="100%"><AreaChart data={proj.data.filter(function(d, i) { return i === 0 || i === proj.data.length - 1 || (proj.showM ? d.month % 3 === 0 : d.month % 12 === 0); })}>
+              <defs><linearGradient id="gP" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#22c55e" stopOpacity={0.3} /><stop offset="100%" stopColor="#22c55e" stopOpacity={0} /></linearGradient><linearGradient id="gC" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#3b82f6" stopOpacity={0.2} /><stop offset="100%" stopColor="#3b82f6" stopOpacity={0} /></linearGradient></defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 9 }} interval="preserveStartEnd" />
+              <YAxis tick={{ fill: "#64748b", fontSize: 9 }} tickFormatter={function(v) { return v >= 1e6 ? "$" + (v / 1e6).toFixed(1) + "M" : "$" + (v / 1e3).toFixed(0) + "k"; }} />
+              <Tooltip content={<ChartTip />} />
+              <Area type="monotone" dataKey="contributed" stroke="#3b82f6" fill="url(#gC)" strokeWidth={2} name="Contributed" />
+              <Area type="monotone" dataKey="portfolio" stroke="#22c55e" fill="url(#gP)" strokeWidth={2} name="Portfolio" />
+            </AreaChart></ResponsiveContainer></div></div>
+            <div style={cd}><div style={ttl}>Year-by-Year</div><table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}><thead><tr>{["Year", "Portfolio", "Contributed", "Gains", "Year's Gain"].map(function(h) { return <th key={h} style={thd}>{h}</th>; })}</tr></thead><tbody>{proj.data.filter(function(d) { return d.month > 0 && d.month % 12 === 0; }).map(function(d, i, arr) { var pg = i > 0 ? arr[i - 1].gains : 0; return <tr key={i}><td style={Object.assign({}, tdd, { color: "#fff", fontWeight: 600 })}>Year {d.month / 12}</td><td style={Object.assign({}, tdd, { color: "#22c55e", fontWeight: 600 })}>{fmt(d.portfolio)}</td><td style={Object.assign({}, tdd, { color: "#3b82f6" })}>{fmt(d.contributed)}</td><td style={Object.assign({}, tdd, { color: "#a78bfa" })}>{fmt(d.gains)}</td><td style={Object.assign({}, tdd, { color: "#22c55e" })}>+{fmt(d.gains - pg)}</td></tr>; })}</tbody></table></div>
+          </div>}
+        </div>}
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
